@@ -141,7 +141,7 @@ function b64Random(bytes = 32): string {
 // -------------------------
 const SESSION_PREFIX       = "session:";
 const SESSION_TTL_SECONDS  = 60 * 60 * 24 * 30; // 30 days
-const TRIAL_LIMIT          = 3;
+const TRIAL_LIMIT          = 2;  // free users get 2 attempts total
 const TRIAL_COOKIE         = "trial";
 const SESSION_COOKIE       = "sess";
 
@@ -254,6 +254,11 @@ type AuthResult =
   | { kind: "session"; username: string; roles: string[] }
   | { kind: "trial"; count: number };
 
+// IP trial tracking key prefix (stored in same KV namespace, TTL 24h)
+const IP_TRIAL_PREFIX    = "ip_trial:";
+const IP_TRIAL_TTL       = 60 * 60 * 24; // 24 hours
+const IP_TRIAL_LIMIT     = 2;            // matches TRIAL_LIMIT
+
 async function guardExtract(
   req: Request, env: Env
 ): Promise<{ allowed: boolean; mode?: AuthResult; headers?: Record<string, string>; error?: Response }> {
@@ -262,7 +267,20 @@ async function guardExtract(
     return { allowed: true, mode: { kind: "session", username: sess.username, roles: sess.roles ?? [] } };
   }
 
-  const used = readTrialCookie(req);
+  // --- Cookie-based trial count (can be cleared by user) ---
+  const cookieUsed = readTrialCookie(req);
+
+  // --- IP-based trial count (cannot be cleared by refreshing) ---
+  const ip = req.headers.get("CF-Connecting-IP") || req.headers.get("X-Forwarded-For") || "unknown";
+  const ipKey = IP_TRIAL_PREFIX + ip;
+  let ipUsed = 0;
+  try {
+    const ipData = await env.USERS.get(ipKey, "json") as null | { count: number };
+    ipUsed = ipData?.count ?? 0;
+  } catch { ipUsed = 0; }
+
+  // Block if EITHER the cookie OR the IP count is exhausted
+  const used = Math.max(cookieUsed, ipUsed);
   if (used >= TRIAL_LIMIT) {
     return {
       allowed: false,
@@ -271,7 +289,11 @@ async function guardExtract(
   }
 
   const newCount = used + 1;
-  const cookie   = setCookie(TRIAL_COOKIE, String(newCount), { httpOnly: true, sameSite: "None", secure: true, maxAge: 60 * 60 * 24 * 7 });
+
+  // Increment IP counter in KV (fire-and-forget, don't await — keeps response fast)
+  env.USERS.put(ipKey, JSON.stringify({ count: newCount }), { expirationTtl: IP_TRIAL_TTL }).catch(() => {});
+
+  const cookie = setCookie(TRIAL_COOKIE, String(newCount), { httpOnly: true, sameSite: "None", secure: true, maxAge: 60 * 60 * 24 * 7 });
   return { allowed: true, mode: { kind: "trial", count: newCount }, headers: { "Set-Cookie": cookie } };
 }
 
