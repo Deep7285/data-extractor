@@ -183,19 +183,52 @@ async function handleLogin(req: Request, env: Env) {
     const password = body.password || "";
     if (!username || !password) return bad({ error: "username_and_password_required" }, env, 400);
 
+    // Accepts both formats make-user.mjs can produce:
+    // Format A: hash = "pbkdf2$sha256$120000$<saltB64>$<hashB64>"  (combined string)
+    // Format B: { salt, hash, iterations } as separate fields      (older format)
     const doc = await env.USERS.get("user:" + username, "json") as null | {
-      username: string; salt: string; hash: string; iterations: number;
-      expires?: string; roles?: string[];
+      username: string;
+      hash: string;         // either combined string OR just the derived hash
+      salt?: string;        // present in Format B only
+      iterations?: number;  // present in Format B only
+      expires?: string;
+      roles?: string[];
+      status?: string;
     };
 
     if (!doc) return bad({ error: "invalid_credentials" }, env, 401);
+
+    if (doc.status === "inactive") {
+      return bad({ error: "account_disabled" }, env, 403);
+    }
 
     if (doc.expires && new Date(doc.expires).getTime() < Date.now()) {
       return bad({ error: "account_expired" }, env, 403);
     }
 
-    const derived = await hashPasswordPBKDF2(password, doc.salt, doc.iterations);
-    if (derived !== doc.hash) return bad({ error: "invalid_credentials" }, env, 401);
+    // Parse whichever hash format is stored
+    let saltB64: string;
+    let iterations: number;
+    let storedHash: string;
+
+    const combinedMatch = doc.hash?.match(/^pbkdf2[$]sha256[$](\d+)[$]([^$]+)[$](.+)$/);
+    if (combinedMatch) {
+      // Format A — make-user.mjs output
+      iterations = parseInt(combinedMatch[1], 10);
+      saltB64    = combinedMatch[2];
+      storedHash = combinedMatch[3];
+    } else if (doc.salt && doc.iterations) {
+      // Format B — separate fields
+      saltB64    = doc.salt;
+      iterations = doc.iterations;
+      storedHash = doc.hash;
+    } else {
+      console.error("[login] Unrecognised hash format for user:", username);
+      return bad({ error: "invalid_credentials" }, env, 401);
+    }
+
+    const derived = await hashPasswordPBKDF2(password, saltB64, iterations);
+    if (derived !== storedHash) return bad({ error: "invalid_credentials" }, env, 401);
 
     const session  = await createSession(env, username, doc.roles ?? []);
     const cookie   = setCookie(SESSION_COOKIE, session.token, { httpOnly: true, sameSite: "None", secure: true, maxAge: SESSION_TTL_SECONDS });
