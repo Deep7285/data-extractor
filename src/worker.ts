@@ -1,12 +1,10 @@
 // src/worker.ts — Invoice Extractor Worker (Gemini Flash edition)
 // -------------------------------------------------------------------
 // Endpoints:
-//   POST /api/login            { username, password }
-//   POST /api/logout           clears session cookie + KV entry
-//   POST /api/extract          FormData(images_dataurl[], doc_text?)
-//                              Session users: unlimited. Free trial: 3 attempts, 1 page max.
-//   POST /api/sync-chat-history  { conversations, messages, etc. }
-//                              Syncs web chat history to KV storage for terminal access
+//   POST /api/login    { username, password }
+//   POST /api/logout   clears session cookie + KV entry
+//   POST /api/extract  FormData(images_dataurl[], doc_text?)
+//                      Session users: unlimited. Free trial: 3 attempts, 1 page max.
 //
 // Wrangler bindings needed:
 //   [vars]           ALLOWED_ORIGIN = "https://deep7285.github.io"
@@ -388,33 +386,7 @@ async function extractWithGemini(env: Env, parts: { imgs: string[]; docText: str
 }
 
 // -------------------------
-// 5) /api/sync-chat-history handler
-// -------------------------
-async function handleSyncChatHistory(req: Request, env: Env) {
-  try {
-    // Verify session (optional but recommended)
-    const sessionCookie = req.headers.get("cookie");
-    
-    const body = await parseJsonBody(req);
-    if (!body || typeof body !== "object") {
-      return bad({ error: "invalid_payload" }, env, 400);
-    }
-
-    // Store in KV with expiration (7 days)
-    const key = `chat-history`;
-    await env.USERS.put(key, JSON.stringify(body), {
-      expirationTtl: 604800 // 7 days in seconds
-    });
-
-    return ok({ ok: true, message: "Chat history synced" }, env);
-  } catch (err) {
-    console.error("[sync-chat-history] Error:", err);
-    return bad({ error: "sync_failed", detail: String(err) }, env, 500);
-  }
-}
-
-// -------------------------
-// 6) /api/extract handler
+// 5) /api/extract handler
 // -------------------------
 async function handleExtract(req: Request, env: Env) {
   const guard = await guardExtract(req, env);
@@ -457,7 +429,7 @@ async function handleExtract(req: Request, env: Env) {
 }
 
 // -------------------------
-// 7) Router
+// 6) Router
 // -------------------------
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -468,10 +440,9 @@ export default {
     const { pathname } = new URL(req.url);
 
     try {
-      if (pathname === "/api/login"              && req.method === "POST") return handleLogin(req, env);
-      if (pathname === "/api/logout"             && req.method === "POST") return handleLogout(req, env);
-      if (pathname === "/api/extract"            && req.method === "POST") return handleExtract(req, env);
-      if (pathname === "/api/sync-chat-history"  && req.method === "POST") return handleSyncChatHistory(req, env);
+      if (pathname === "/api/login"   && req.method === "POST") return handleLogin(req, env);
+      if (pathname === "/api/logout"  && req.method === "POST") return handleLogout(req, env);
+      if (pathname === "/api/extract" && req.method === "POST") return handleExtract(req, env);
 
       return bad({ error: "not_found" }, env, 404);
     } catch (err: any) {
