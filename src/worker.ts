@@ -1,10 +1,12 @@
 // src/worker.ts — Invoice Extractor Worker (Gemini Flash edition)
 // -------------------------------------------------------------------
 // Endpoints:
-//   POST /api/login    { username, password }
-//   POST /api/logout   clears session cookie + KV entry
-//   POST /api/extract  FormData(images_dataurl[], doc_text?)
-//                      Session users: unlimited. Free trial: 3 attempts, 1 page max.
+//   POST /api/login            { username, password }
+//   POST /api/logout           clears session cookie + KV entry
+//   POST /api/extract          FormData(images_dataurl[], doc_text?)
+//                              Session users: unlimited. Free trial: 3 attempts, 1 page max.
+//   POST /api/sync-chat-history  { conversations, messages, etc. }
+//                              Syncs web chat history to KV storage for terminal access
 //
 // Wrangler bindings needed:
 //   [vars]           ALLOWED_ORIGIN = "https://deep7285.github.io"
@@ -77,6 +79,21 @@ const GEMINI_RESPONSE_SCHEMA = {
 // -------------------------
 const JSON_HEADER = { "content-type": "application/json; charset=utf-8" };
 
+function stripBom(s: string): string {
+  return s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s;
+}
+
+async function parseJsonBody<T = any>(req: Request): Promise<T> {
+  const text = await req.text();
+  return JSON.parse(stripBom(text)) as T;
+}
+
+async function getKVJson<T>(ns: KVNamespace, key: string): Promise<T | null> {
+  const raw = await ns.get(key, "text");
+  if (raw === null) return null;
+  return JSON.parse(stripBom(raw)) as T;
+}
+
 function cors(env: Env) {
   return {
     "Access-Control-Allow-Origin":      env.ALLOWED_ORIGIN,
@@ -106,6 +123,12 @@ function getCookie(req: Request, name: string): string | null {
   const raw = req.headers.get("Cookie") || "";
   const m = raw.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+function getBearerToken(req: Request): string | null {
+  const auth = req.headers.get("Authorization") || "";
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1].trim() : null;
 }
 
 function setCookie(
@@ -147,7 +170,7 @@ const SESSION_COOKIE       = "sess";
 
 async function getSession(env: Env, token: string | null) {
   if (!token) return null;
-  return env.USERS.get(SESSION_PREFIX + token, "json") as Promise<null | { username: string; exp: number; roles?: string[] }>;
+  return getKVJson<{ username: string; exp: number; roles?: string[] }>(env.USERS, SESSION_PREFIX + token);
 }
 
 async function createSession(env: Env, username: string, roles: string[] = []) {
@@ -174,7 +197,7 @@ function readTrialCookie(req: Request): number {
 // -------------------------
 async function handleLogin(req: Request, env: Env) {
   try {
-    const body = await req.json<{ username?: string; password?: string; _hp?: string }>();
+    const body = await parseJsonBody<{ username?: string; password?: string; _hp?: string }>(req);
 
     // Honeypot: bots fill hidden fields, humans don't
     if (body._hp) return bad({ error: "invalid_request" }, env, 400);
@@ -186,15 +209,15 @@ async function handleLogin(req: Request, env: Env) {
     // Accepts both formats make-user.mjs can produce:
     // Format A: hash = "pbkdf2$sha256$120000$<saltB64>$<hashB64>"  (combined string)
     // Format B: { salt, hash, iterations } as separate fields      (older format)
-    const doc = await env.USERS.get("user:" + username, "json") as null | {
+    const doc = await getKVJson<{
       username: string;
-      hash: string;         // either combined string OR just the derived hash
-      salt?: string;        // present in Format B only
-      iterations?: number;  // present in Format B only
+      hash: string;
+      salt?: string;
+      iterations?: number;
       expires?: string;
       roles?: string[];
       status?: string;
-    };
+    }>(env.USERS, "user:" + username);
 
     if (!doc) return bad({ error: "invalid_credentials" }, env, 401);
 
@@ -230,18 +253,24 @@ async function handleLogin(req: Request, env: Env) {
     const derived = await hashPasswordPBKDF2(password, saltB64, iterations);
     if (derived !== storedHash) return bad({ error: "invalid_credentials" }, env, 401);
 
-    const session  = await createSession(env, username, doc.roles ?? []);
-    const cookie   = setCookie(SESSION_COOKIE, session.token, { httpOnly: true, sameSite: "None", secure: true, maxAge: SESSION_TTL_SECONDS });
+    const session    = await createSession(env, username, doc.roles ?? []);
+    const cookie     = setCookie(SESSION_COOKIE, session.token, { httpOnly: true, sameSite: "None", secure: true, maxAge: SESSION_TTL_SECONDS });
     const clearTrial = setCookie(TRIAL_COOKIE, "0", { httpOnly: true, sameSite: "None", secure: true, maxAge: 0 });
 
-    return ok({ ok: true, username }, env, { "Set-Cookie": `${cookie}, ${clearTrial}` });
+    const headers = new Headers({ ...JSON_HEADER, ...cors(env) });
+    headers.append("Set-Cookie", cookie);
+    headers.append("Set-Cookie", clearTrial);
+    return new Response(
+      JSON.stringify({ ok: true, username, token: session.token }),
+      { status: 200, headers }
+    );
   } catch (e: any) {
     return bad({ error: e?.message || "bad_request" }, env, 400);
   }
 }
 
 async function handleLogout(req: Request, env: Env) {
-  const token = getCookie(req, SESSION_COOKIE);
+  const token = getCookie(req, SESSION_COOKIE) ?? getBearerToken(req);
   await destroySession(env, token);
   const clear = setCookie(SESSION_COOKIE, "", { httpOnly: true, sameSite: "None", secure: true, maxAge: 0 });
   return ok({ ok: true }, env, { "Set-Cookie": clear });
@@ -262,7 +291,8 @@ const IP_TRIAL_LIMIT     = 2;            // matches TRIAL_LIMIT
 async function guardExtract(
   req: Request, env: Env
 ): Promise<{ allowed: boolean; mode?: AuthResult; headers?: Record<string, string>; error?: Response }> {
-  const sess = await getSession(env, getCookie(req, SESSION_COOKIE));
+  const sessionToken = getCookie(req, SESSION_COOKIE) ?? getBearerToken(req);
+  const sess = await getSession(env, sessionToken);
   if (sess && sess.exp > Math.floor(Date.now() / 1000)) {
     return { allowed: true, mode: { kind: "session", username: sess.username, roles: sess.roles ?? [] } };
   }
@@ -275,7 +305,7 @@ async function guardExtract(
   const ipKey = IP_TRIAL_PREFIX + ip;
   let ipUsed = 0;
   try {
-    const ipData = await env.USERS.get(ipKey, "json") as null | { count: number };
+    const ipData = await getKVJson<{ count: number }>(env.USERS, ipKey);
     ipUsed = ipData?.count ?? 0;
   } catch { ipUsed = 0; }
 
@@ -358,7 +388,33 @@ async function extractWithGemini(env: Env, parts: { imgs: string[]; docText: str
 }
 
 // -------------------------
-// 5) /api/extract handler
+// 5) /api/sync-chat-history handler
+// -------------------------
+async function handleSyncChatHistory(req: Request, env: Env) {
+  try {
+    // Verify session (optional but recommended)
+    const sessionCookie = req.headers.get("cookie");
+    
+    const body = await parseJsonBody(req);
+    if (!body || typeof body !== "object") {
+      return bad({ error: "invalid_payload" }, env, 400);
+    }
+
+    // Store in KV with expiration (7 days)
+    const key = `chat-history`;
+    await env.USERS.put(key, JSON.stringify(body), {
+      expirationTtl: 604800 // 7 days in seconds
+    });
+
+    return ok({ ok: true, message: "Chat history synced" }, env);
+  } catch (err) {
+    console.error("[sync-chat-history] Error:", err);
+    return bad({ error: "sync_failed", detail: String(err) }, env, 500);
+  }
+}
+
+// -------------------------
+// 6) /api/extract handler
 // -------------------------
 async function handleExtract(req: Request, env: Env) {
   const guard = await guardExtract(req, env);
@@ -401,7 +457,7 @@ async function handleExtract(req: Request, env: Env) {
 }
 
 // -------------------------
-// 6) Router
+// 7) Router
 // -------------------------
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -412,9 +468,10 @@ export default {
     const { pathname } = new URL(req.url);
 
     try {
-      if (pathname === "/api/login"   && req.method === "POST") return handleLogin(req, env);
-      if (pathname === "/api/logout"  && req.method === "POST") return handleLogout(req, env);
-      if (pathname === "/api/extract" && req.method === "POST") return handleExtract(req, env);
+      if (pathname === "/api/login"              && req.method === "POST") return handleLogin(req, env);
+      if (pathname === "/api/logout"             && req.method === "POST") return handleLogout(req, env);
+      if (pathname === "/api/extract"            && req.method === "POST") return handleExtract(req, env);
+      if (pathname === "/api/sync-chat-history"  && req.method === "POST") return handleSyncChatHistory(req, env);
 
       return bad({ error: "not_found" }, env, 404);
     } catch (err: any) {

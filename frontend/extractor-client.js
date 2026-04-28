@@ -28,6 +28,9 @@ let isRunning = false;  // prevent double-submit
 function getSessionUser()        { return sessionStorage.getItem("dx_user"); }
 function setSessionUser(u)       { sessionStorage.setItem("dx_user", u); }
 function clearSessionUser()      { sessionStorage.removeItem("dx_user"); }
+function getSessionToken()       { return sessionStorage.getItem("dx_token"); }
+function setSessionToken(t)      { sessionStorage.setItem("dx_token", t); }
+function clearSessionToken()     { sessionStorage.removeItem("dx_token"); }
 
 // ── Toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = "info", duration = 4000) {
@@ -94,11 +97,14 @@ async function apiLogin(username, password, honeypot) {
 
 // ── API: Logout ───────────────────────────────────────────────────────────────
 async function apiLogout() {
+  const token = getSessionToken();
   await fetch(`${WORKER_ENDPOINT}/api/logout`, {
     method:      "POST",
-    credentials: "include"
+    credentials: "include",
+    headers:     token ? { "Authorization": `Bearer ${token}` } : {}
   }).catch(() => {});
   clearSessionUser();
+  clearSessionToken();
   syncAuthUI();
   showToast("Logged out successfully", "info");
 }
@@ -153,6 +159,7 @@ async function handleLoginSubmit() {
   try {
     const data = await apiLogin(username, password, honeypot);
     setSessionUser(data.username);
+    if (data.token) setSessionToken(data.token);
     syncAuthUI();
     closeLoginModal();
     showToast(`Welcome back, ${data.username}!`, "success");
@@ -240,9 +247,11 @@ async function postToWorker({ imagesDataUrls = [], docText = "" }) {
   for (const d of imagesDataUrls) form.append("images_dataurl[]", d);
   if (docText?.trim()) form.append("doc_text", docText.trim());
 
+  const token = getSessionToken();
   const resp = await fetch(`${WORKER_ENDPOINT}/api/extract`, {
     method:      "POST",
-    credentials: "include",  // ← CRITICAL: session cookie must travel with request
+    credentials: "include",
+    headers:     token ? { "Authorization": `Bearer ${token}` } : {},
     body:        form
   });
 

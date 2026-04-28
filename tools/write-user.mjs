@@ -31,7 +31,7 @@ if (!username || !password) {
 
 // PBKDF2 hash — same algorithm the worker uses to verify
 const salt       = randomBytes(16);
-const iterations = 120000;
+const iterations = 100000;
 const keyLen     = 32;
 const digest     = "sha256";
 const derived    = pbkdf2Sync(password, salt, iterations, keyLen, digest);
