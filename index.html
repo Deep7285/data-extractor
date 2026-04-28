@@ -459,6 +459,15 @@
     }
     .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
     .field-hp { display: none !important; }
+    .field-pw-wrap { position: relative; }
+    .field-pw-wrap input { padding-right: 42px; }
+    .btn-pw-toggle {
+      position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; cursor: pointer; color: var(--text-muted);
+      padding: 4px; display: flex; align-items: center; transition: color .15s;
+    }
+    .btn-pw-toggle:hover { color: var(--text-dim); }
+    .btn-pw-toggle svg { width: 18px; height: 18px; }
     .login-err { background: rgba(232,70,70,.1); border: 1px solid rgba(232,70,70,.25); border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #EF8888; margin-bottom: 16px; }
     .modal-acts { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
     .btn-cancel { padding: 10px 20px; background: transparent; color: var(--text-dim); border: 1px solid var(--border-hi); border-radius: 10px; font-weight: 600; cursor: pointer; font-size: 14px; }
@@ -493,11 +502,13 @@
     .foot-links { display: flex; align-items: center; gap: 10px; }
     .foot-link {
       display: inline-flex; align-items: center; gap: 7px;
-      padding: 7px 14px; background: var(--surface-2);
-      border: 1px solid var(--border); border-radius: 8px;
-      font-size: 13px; font-weight: 600; color: var(--text-dim); transition: all .2s var(--ease);
+      padding: 7px 16px; background: var(--surface-2);
+      border: 1px solid var(--accent); border-radius: 8px;
+      font-size: 13px; font-weight: 600; color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-dim);
+      transition: all .2s var(--ease);
     }
-    .foot-link:hover { color: var(--text); border-color: var(--border-hi); text-decoration: none; }
+    .foot-link:hover { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); box-shadow: var(--acc-glow); text-decoration: none; }
 
     .btn-theme {
       width: 36px; height: 36px; border-radius: 8px;
@@ -741,7 +752,14 @@
     </div>
     <div class="field">
       <label for="loginPassword">Password</label>
-      <input type="password" id="loginPassword" autocomplete="current-password" placeholder="Your password" />
+      <div class="field-pw-wrap">
+        <input type="password" id="loginPassword" autocomplete="current-password" placeholder="Your password" />
+        <button type="button" class="btn-pw-toggle" id="pwToggle" aria-label="Show password">
+          <svg id="eyeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <!-- Honeypot trap — invisible to humans -->
     <div class="field field-hp" aria-hidden="true">
@@ -774,5 +792,22 @@
   })();
 </script>
 <script src="frontend/extractor-client.js"></script>
+<script>
+  (function(){
+    var toggle = document.getElementById('pwToggle');
+    var input  = document.getElementById('loginPassword');
+    var icon   = document.getElementById('eyeIcon');
+    var eyeOpen  = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    var eyeSlash = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    if (toggle && input && icon) {
+      toggle.addEventListener('click', function(){
+        var show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        icon.innerHTML = show ? eyeSlash : eyeOpen;
+        toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      });
+    }
+  })();
+</script>
 </body>
 </html>
