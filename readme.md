@@ -1,6 +1,6 @@
-# DataExtract — AI Invoice Data Extractor
+# DataExtract: An AI Invoice Data Extractor
 
-A serverless web app that reads invoices — printed, scanned, or handwritten — and exports the structured data to Excel.
+A serverless web app that reads invoices, printed, scanned, or handwritten and exports the structured data to Excel.
 ---
 
 ## What it does
