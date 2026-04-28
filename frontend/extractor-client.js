@@ -425,7 +425,12 @@ function initDragDrop() {
       updateFileList();
     }
   });
-  zone.addEventListener("click", () => fileInput.click());
+  // The file input sits inside the zone, so direct clicks on it already work.
+  // Only programmatically open the dialog when clicking the zone background — 
+  // not when clicking the input itself (which would double-fire the dialog).
+  zone.addEventListener("click", (e) => {
+    if (e.target !== fileInput) fileInput.click();
+  });
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
