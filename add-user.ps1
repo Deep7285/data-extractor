@@ -31,7 +31,8 @@ Write-Host "JSON generated OK" -ForegroundColor Green
 
 # Step 2: Write JSON to a temp file (avoids all PowerShell quoting issues)
 $tmpFile = [System.IO.Path]::GetTempFileName()
-[System.IO.File]::WriteAllText($tmpFile, $jsonLine, [System.Text.Encoding]::UTF8)
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($tmpFile, $jsonLine, $utf8NoBom)
 
 Write-Host "Temp file: $tmpFile"
 

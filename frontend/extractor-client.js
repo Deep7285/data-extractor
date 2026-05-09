@@ -28,6 +28,9 @@ let isRunning = false;  // prevent double-submit
 function getSessionUser()        { return sessionStorage.getItem("dx_user"); }
 function setSessionUser(u)       { sessionStorage.setItem("dx_user", u); }
 function clearSessionUser()      { sessionStorage.removeItem("dx_user"); }
+function getSessionToken()       { return sessionStorage.getItem("dx_token"); }
+function setSessionToken(t)      { sessionStorage.setItem("dx_token", t); }
+function clearSessionToken()     { sessionStorage.removeItem("dx_token"); }
 
 // ── Toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = "info", duration = 4000) {
@@ -94,11 +97,14 @@ async function apiLogin(username, password, honeypot) {
 
 // ── API: Logout ───────────────────────────────────────────────────────────────
 async function apiLogout() {
+  const token = getSessionToken();
   await fetch(`${WORKER_ENDPOINT}/api/logout`, {
     method:      "POST",
-    credentials: "include"
+    credentials: "include",
+    headers:     token ? { "Authorization": `Bearer ${token}` } : {}
   }).catch(() => {});
   clearSessionUser();
+  clearSessionToken();
   syncAuthUI();
   showToast("Logged out successfully", "info");
 }
@@ -153,6 +159,7 @@ async function handleLoginSubmit() {
   try {
     const data = await apiLogin(username, password, honeypot);
     setSessionUser(data.username);
+    if (data.token) setSessionToken(data.token);
     syncAuthUI();
     closeLoginModal();
     showToast(`Welcome back, ${data.username}!`, "success");
@@ -240,9 +247,11 @@ async function postToWorker({ imagesDataUrls = [], docText = "" }) {
   for (const d of imagesDataUrls) form.append("images_dataurl[]", d);
   if (docText?.trim()) form.append("doc_text", docText.trim());
 
+  const token = getSessionToken();
   const resp = await fetch(`${WORKER_ENDPOINT}/api/extract`, {
     method:      "POST",
-    credentials: "include",  // ← CRITICAL: session cookie must travel with request
+    credentials: "include",
+    headers:     token ? { "Authorization": `Bearer ${token}` } : {},
     body:        form
   });
 
@@ -320,11 +329,26 @@ function renderTable(rows) {
 // ── Download Excel ────────────────────────────────────────────────────────────
 function downloadExcel() {
   if (!allRows.length) { showToast("Nothing to download yet.", "info"); return; }
-  const ws = XLSX.utils.json_to_sheet(allRows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Invoices");
-  XLSX.writeFile(wb, `invoices_${Date.now()}.xlsx`);
-  showToast("Excel file downloaded!", "success");
+  try {
+    if (typeof XLSX === "undefined") throw new Error("XLSX library not loaded. Check your internet connection and reload the page.");
+    const ws  = XLSX.utils.json_to_sheet(allRows);
+    const wb  = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Invoices");
+    const buf  = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `invoices_${Date.now()}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast("Excel file downloaded!", "success");
+  } catch (e) {
+    showToast("Download failed: " + e.message, "error");
+    console.error("[DataExtract] Excel download error:", e);
+  }
 }
 
 // ── Reset session ─────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ const expires = arg("expires", "2099-12-31");
 
 // PBKDF2 params (browser-compatible & light for Workers)
 const salt = randomBytes(16);
-const iterations = 120000;
+const iterations = 100000;
 const keyLen = 32;
 const digest = "sha256";
 
