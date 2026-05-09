@@ -329,11 +329,26 @@ function renderTable(rows) {
 // ── Download Excel ────────────────────────────────────────────────────────────
 function downloadExcel() {
   if (!allRows.length) { showToast("Nothing to download yet.", "info"); return; }
-  const ws = XLSX.utils.json_to_sheet(allRows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Invoices");
-  XLSX.writeFile(wb, `invoices_${Date.now()}.xlsx`);
-  showToast("Excel file downloaded!", "success");
+  try {
+    if (typeof XLSX === "undefined") throw new Error("XLSX library not loaded. Check your internet connection and reload the page.");
+    const ws  = XLSX.utils.json_to_sheet(allRows);
+    const wb  = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Invoices");
+    const buf  = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `invoices_${Date.now()}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast("Excel file downloaded!", "success");
+  } catch (e) {
+    showToast("Download failed: " + e.message, "error");
+    console.error("[DataExtract] Excel download error:", e);
+  }
 }
 
 // ── Reset session ─────────────────────────────────────────────────────────────
